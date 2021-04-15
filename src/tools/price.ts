@@ -4,10 +4,22 @@ import { firestore } from './firestore';
 
 const costCollection = firestore.collection('cost');
 
+const costs: { [key: string]: any } = {};
+
 export async function getPrice(
   branch: string,
   minutes: number
 ): Promise<number> {
+  const cost = await getBranch(branch);
+  let price = cost.startCost;
+  const removedMinutes = minutes - cost.freeTime;
+  if (removedMinutes <= 0) return price;
+  price += cost.addedCost * removedMinutes;
+  return price;
+}
+
+export async function getBranch(branch: string): Promise<any> {
+  if (costs[branch]) return costs[branch];
   let cost = await costCollection.doc(branch).get();
   let costData = cost.data();
 
@@ -20,9 +32,5 @@ export async function getPrice(
     }
   }
 
-  let price = costData.startCost;
-  const removedMinutes = minutes - costData.freeTime;
-  if (removedMinutes <= 0) return price;
-  price += costData.addedCost * removedMinutes;
-  return price;
+  return costData;
 }
