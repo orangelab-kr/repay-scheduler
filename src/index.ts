@@ -43,6 +43,12 @@ async function main() {
       const usedAt = `${startedAt} ~ ${endedAt}(${diff}분, ${price.toLocaleString()}원)`;
       totalPrice += price;
 
+      const paiedRide = await isPaiedRide(rideId);
+      if (paiedRide) {
+        logger.info(`이미 결제된 라이드입니다.`);
+        continue;
+      }
+
       logger.info(`${ride.branch} - ${usedAt}`);
       if (ride.repayLevel >= maxLevel) {
         // 알림톡을 보내지 않음
@@ -232,6 +238,8 @@ async function getUserRides(
     .doc(uid)
     .collection('ride')
     .where('unpaied', '==', true)
+    .orderBy('end_time', 'desc')
+    .limit(1)
     .get();
 
   rideDocs.forEach((ride) => {
@@ -288,6 +296,20 @@ async function getUsers(): Promise<
   return users;
 }
 
+async function isPaiedRide(rideId: string): Promise<boolean> {
+  const ride = await rideCol.doc(rideId).get();
+  const data = ride.data();
+
+  if (!data) return true;
+  if (data.payment !== null) return true;
+  return false;
+}
+
+async function getUser(uid: string): Promise<any> {
+  const user = await userCol.doc(uid).get();
+  return user.data();
+}
+
 async function getUnpaiedRides(): Promise<any[]> {
   const rides: any[] = [];
   // const unpaiedRides = await rideCol
@@ -305,11 +327,6 @@ async function getUnpaiedRides(): Promise<any[]> {
   logger.info(`미결제 라이드 기록, ${unpaiedRides.size}개 발견하였습니다.`);
   unpaiedRides.forEach((ride) => rides.push(ride.data()));
   return rides;
-}
-
-async function getUser(uid: string): Promise<any> {
-  const user = await userCol.doc(uid).get();
-  return user.data();
 }
 
 main();
