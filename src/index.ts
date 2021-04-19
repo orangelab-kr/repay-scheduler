@@ -21,69 +21,85 @@ async function main() {
     );
 
     const rides = await getUserRides(user.uid);
-    logger.info(
-      `${user.uid} - ${username}님 ${phone} ${birthday} (${rides.length}회)`
-    );
+    logger.info(`${user.uid} - ${username}님 ${phone} ${birthday}`);
 
-    let totalPrice = 0;
     for (const ride of rides) {
-      const currentDate = dayjs().startOf('day');
-      if (currentDate.diff(ride.repayTime.startOf('day'), 'days') < 7) {
-        logger.info(`처리한지 일주일이 되지 않아 넘어갑니다.`);
-        continue;
-      }
-
-      await upgradeLevel(user, ride);
-      const level = ride.repayLevel;
-      const diff = ride.endedAt.diff(ride.startedAt, 'minutes');
-      const price = await getPrice(ride.branch, diff);
-      const startedAt = ride.startedAt.format('YYYY년 MM월 DD년 HH시 mm분');
-      const endedAt = ride.endedAt.format('HH시 mm분');
-      const usedAt = `${startedAt} ~ ${endedAt}(${diff}분, ${price.toLocaleString()}원)`;
-      totalPrice += price;
-
-      const rideDetails = await getRide(ride.rideId);
-      if (!rideDetails) {
-        logger.info(`잘못된 데이터입니다. 무시합니다.`);
-        continue;
-      }
-
-      if (rideDetails.payment) {
-        logger.info(`이미 결제된 라이드입니다.`);
-        continue;
-      }
-
-      logger.info(`${ride.branch} - ${usedAt}`);
-      if (ride.repayLevel >= maxLevel) {
-        logger.info(`이미 관리자에서 처리 중인 라이드 기록입니다.`);
-        continue;
-      }
-
-      if (user.billingKeys) {
-        logger.info(`빌링키가 존재하여 결제를 시도합니다.`);
-        const result = await retryPay(user, ride, rideDetails, price);
-        if (result) {
-          logger.info(
-            `빌링키로 결제를 성공하여 결제 링크를 발송하지 않습니다.`
-          );
-
+      try {
+        const currentDate = dayjs().startOf('day');
+        if (currentDate.diff(ride.repayTime.startOf('day'), 'days') < 7) {
+          logger.info(`처리한지 일주일이 되지 않아 넘어갑니다.`);
           continue;
         }
+
+        await upgradeLevel(user, ride);
+        if (username === '없음' || phone === '전화번호 없음') {
+          logger.info(`이름 또는 전화번호가 올바르지 않습니다. 무시합니다.`);
+        }
+
+        const level = ride.repayLevel;
+        const diff = ride.endedAt.diff(ride.startedAt, 'minutes');
+        const price = await getPrice(ride.branch, diff);
+        const startedAt = ride.startedAt.format('YYYY년 MM월 DD년 HH시 mm분');
+        const endedAt = ride.endedAt.format('HH시 mm분');
+        const usedAt = `${startedAt} ~ ${endedAt}(${diff}분, ${price.toLocaleString()}원)`;
+
+        const rideDetails = await getRide(ride.rideId);
+        if (!rideDetails) {
+          logger.info(`잘못된 데이터입니다. 무시합니다.`);
+          continue;
+        }
+
+        if (rideDetails.payment) {
+          logger.info(`이미 결제된 라이드입니다.`);
+          continue;
+        }
+
+        logger.info(`${ride.branch} - ${usedAt}`);
+        if (ride.repayLevel >= maxLevel) {
+          logger.info(`이미 관리자에서 처리 중인 라이드 기록입니다.`);
+          continue;
+        }
+
+        if (user.billingKeys) {
+          logger.info(`사용자 정보에 빌링키가 존재하여 결제를 시도합니다.`);
+          const result = await retryPay(user, ride, rideDetails, price);
+          if (result) {
+            logger.info(
+              `빌링키로 결제를 성공하여 결제 링크를 발송하지 않습니다.`
+            );
+
+            continue;
+          }
+        }
+
+        logger.info(`결제 링크: https://repay.hikick.kr/${ride.rideId}`);
+        if (level < maxLevel - 1) {
+          await send(user.phone, 'general', {
+            user,
+            ride,
+            rideDetails,
+            usedAt,
+            price: `${price.toLocaleString()}원`,
+          });
+
+          logger.info('문자를 전송하였습니다. (일반)');
+          continue;
+        }
+
+        await send(user.phone, 'warning', {
+          user,
+          ride,
+          rideDetails,
+          usedAt,
+          price: `${price.toLocaleString()}원`,
+        });
+
+        logger.info('문자를 전송하였습니다. (경고)');
+      } catch (err) {
+        logger.error('라이드 오류가 발생하였습니다. ' + err.message);
+        logger.error(err.stack);
       }
-
-      logger.info(`결제 링크: https://repay.hikick.kr/${ride.rideId}`);
-
-      if (level < maxLevel - 1) {
-        // todo - 알림톡(일반 경고)
-        logger.info('알림톡을 전송하였습니다. (일반)');
-        continue;
-      }
-
-      // todo - 알림톡(경고)
-      logger.info('알림톡을 전송하였습니다. (경고)');
     }
-
-    logger.info(`총 결제 금액: ${totalPrice.toLocaleString()}원`);
   }
 }
 
@@ -171,7 +187,7 @@ async function retryPay(
       });
 
       if (res.status === 'paid') {
-        logger.info(`- ${billingKey} - 결제 성공`);
+        logger.info(`결제에 성공하였습니다. (${billingKey})`);
         await setPaied(user, ride, merchantUid, price);
         const diff = ride.endedAt.diff(ride.startedAt, 'minutes');
         const startedAt = ride.startedAt.format('YYYY년 MM월 DD년 HH시 mm분');
@@ -188,7 +204,7 @@ async function retryPay(
         return true;
       }
 
-      logger.info(`- ${billingKey} - 결제 실패 ${res.fail_reason}`);
+      logger.info(`결제 실패, ${res.fail_reason}`);
       await sleep(3000);
     }
 
