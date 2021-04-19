@@ -1,5 +1,5 @@
 import dayjs, { Dayjs } from 'dayjs';
-import { firestore, getPrice, iamport, logger } from './tools';
+import { firestore, getPrice, iamport, logger, send } from './tools';
 
 const rideCol = firestore.collection('ride');
 const userCol = firestore.collection('users');
@@ -35,7 +35,6 @@ async function main() {
 
       await upgradeLevel(user, ride);
       const level = ride.repayLevel;
-      const rideId = ride.ref.substr(5);
       const diff = ride.endedAt.diff(ride.startedAt, 'minutes');
       const price = await getPrice(ride.branch, diff);
       const startedAt = ride.startedAt.format('YYYY년 MM월 DD년 HH시 mm분');
@@ -43,22 +42,26 @@ async function main() {
       const usedAt = `${startedAt} ~ ${endedAt}(${diff}분, ${price.toLocaleString()}원)`;
       totalPrice += price;
 
-      const paiedRide = await isPaiedRide(rideId);
-      if (paiedRide) {
+      const rideDetails = await getRide(ride.rideId);
+      if (!rideDetails) {
+        logger.info(`잘못된 데이터입니다. 무시합니다.`);
+        continue;
+      }
+
+      if (rideDetails.payment) {
         logger.info(`이미 결제된 라이드입니다.`);
         continue;
       }
 
       logger.info(`${ride.branch} - ${usedAt}`);
       if (ride.repayLevel >= maxLevel) {
-        // 알림톡을 보내지 않음
         logger.info(`이미 관리자에서 처리 중인 라이드 기록입니다.`);
         continue;
       }
 
       if (user.billingKeys) {
         logger.info(`빌링키가 존재하여 결제를 시도합니다.`);
-        const result = await retryPay(user, ride, price);
+        const result = await retryPay(user, ride, rideDetails, price);
         if (result) {
           logger.info(
             `빌링키로 결제를 성공하여 결제 링크를 발송하지 않습니다.`
@@ -68,7 +71,7 @@ async function main() {
         }
       }
 
-      logger.info(`결제 링크: https://repay.hikick.kr/${rideId}`);
+      logger.info(`결제 링크: https://repay.hikick.kr/${ride.rideId}`);
 
       if (level < maxLevel - 1) {
         // todo - 알림톡(일반 경고)
@@ -93,6 +96,7 @@ async function upgradeLevel(
     billingKeys: string[];
   },
   ride: {
+    rideId: string;
     branch: string;
     startedAt: Dayjs;
     endedAt: Dayjs;
@@ -133,6 +137,7 @@ async function retryPay(
     billingKeys: string[];
   },
   ride: {
+    rideId: string;
     branch: string;
     startedAt: Dayjs;
     endedAt: Dayjs;
@@ -141,31 +146,59 @@ async function retryPay(
     repayLevel: number;
     ref: string;
   },
+  rideDetails: {
+    branch: string;
+    cost: number;
+    coupon: string;
+    endedAt: Dayjs;
+    kickboardName: string;
+    kickboardId: string;
+    payment?: string;
+    startedAt: Dayjs;
+  },
   price: number
 ): Promise<boolean> {
-  const merchantUid = `${Date.now()}`;
-  for (const billingKey of user.billingKeys) {
-    const res = await iamport.subscribe.again({
-      customer_uid: billingKey,
-      merchant_uid: merchantUid,
-      amount: price,
-      name: ride.branch,
-      buyer_name: user.username,
-      buyer_tel: user.phone,
-    });
+  try {
+    const merchantUid = `${Date.now()}`;
+    for (const billingKey of user.billingKeys) {
+      const res = await iamport.subscribe.again({
+        customer_uid: billingKey,
+        merchant_uid: merchantUid,
+        amount: price,
+        name: ride.branch,
+        buyer_name: user.username,
+        buyer_tel: user.phone,
+      });
 
-    if (res.status === 'paid') {
-      logger.info(`- ${billingKey} - 결제 성공`);
-      // todo - 알림톡 (완료)
-      await setPaied(user, ride, merchantUid, price);
-      return true;
+      if (res.status === 'paid') {
+        logger.info(`- ${billingKey} - 결제 성공`);
+        await setPaied(user, ride, merchantUid, price);
+        const diff = ride.endedAt.diff(ride.startedAt, 'minutes');
+        const startedAt = ride.startedAt.format('YYYY년 MM월 DD년 HH시 mm분');
+        const endedAt = ride.endedAt.format('HH시 mm분');
+        const usedAt = `${startedAt} ~ ${endedAt}(${diff}분, ${price.toLocaleString()}원)`;
+        await send(user.phone, 'completed', {
+          user,
+          usedAt,
+          cardName: `${res.card_number} (${res.card_name})`,
+          price: `${price.toLocaleString()}원`,
+          rideDetails,
+        });
+
+        return true;
+      }
+
+      logger.info(`- ${billingKey} - 결제 실패 ${res.fail_reason}`);
+      await sleep(3000);
     }
 
-    logger.info(`- ${billingKey} - 결제 실패 ${res.fail_reason}`);
-    await sleep(3000);
-  }
+    return false;
+  } catch (err) {
+    logger.error('결제 오류가 발생하였습니다. ' + err.name);
+    logger.error(err.stack);
 
-  return false;
+    return true;
+  }
 }
 
 async function setPaied(
@@ -192,6 +225,8 @@ async function setPaied(
   await rideCol.doc(rideId).update({
     cost: price,
     payment: merchantUid,
+    repayLevel: null,
+    repayTime: null,
   });
 
   const userRides = await userCol
@@ -207,7 +242,7 @@ async function setPaied(
       .doc(user.uid)
       .collection('ride')
       .doc(userRideId)
-      .update({ unpaied: false });
+      .update({ unpaied: false, repayLevel: null, repayTime: null });
   }
 }
 
@@ -215,6 +250,7 @@ async function getUserRides(
   uid: string
 ): Promise<
   {
+    rideId: string;
     branch: string;
     startedAt: Dayjs;
     endedAt: Dayjs;
@@ -225,6 +261,7 @@ async function getUserRides(
   }[]
 > {
   const rides: {
+    rideId: string;
     branch: string;
     startedAt: Dayjs;
     endedAt: Dayjs;
@@ -245,6 +282,7 @@ async function getUserRides(
   rideDocs.forEach((ride) => {
     const data = ride.data();
     rides.push({
+      rideId: data.ref.substr(5),
       branch: data.branch,
       startedAt: dayjs(data.start_time._seconds * 1000),
       endedAt: dayjs(data.end_time._seconds * 1000),
@@ -296,13 +334,32 @@ async function getUsers(): Promise<
   return users;
 }
 
-async function isPaiedRide(rideId: string): Promise<boolean> {
+async function getRide(
+  rideId: string
+): Promise<{
+  branch: string;
+  cost: number;
+  coupon: string;
+  endedAt: Dayjs;
+  kickboardName: string;
+  kickboardId: string;
+  payment?: string;
+  startedAt: Dayjs;
+} | null> {
   const ride = await rideCol.doc(rideId).get();
   const data = ride.data();
+  if (!data) return null;
 
-  if (!data) return true;
-  if (data.payment !== null) return true;
-  return false;
+  return {
+    branch: data.branch,
+    cost: data.cost,
+    coupon: data.coupon,
+    endedAt: dayjs(data.end_time._seconds * 1000),
+    kickboardName: data.kick,
+    kickboardId: data.kickName,
+    payment: data.payment,
+    startedAt: dayjs(data.start_time._seconds * 1000),
+  };
 }
 
 async function getUser(uid: string): Promise<any> {
