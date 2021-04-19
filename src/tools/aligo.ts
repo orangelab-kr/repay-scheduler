@@ -20,6 +20,7 @@ export async function send(
   if (!ALIGO_PROXY || !ALIGO_IDENTIFIER || !ALIGO_SECRET || !ALIGO_SENDER) {
     throw Error('문자를 발송할 수 없습니다.');
   }
+
   const renderer = await engine.renderFile(template, props);
   const res = await rp({
     method: 'POST',
@@ -35,6 +36,5 @@ export async function send(
       testmode_yn: process.env.NODE_ENV !== 'prod' ? 'true' : 'false',
     },
   });
-
   return res.result_code === 1;
 }
