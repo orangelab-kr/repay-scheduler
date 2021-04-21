@@ -1,6 +1,6 @@
 import { InternalError } from './error';
-import { OPCODE } from './opcode';
 import { firestore } from './firestore';
+import { OPCODE } from './opcode';
 
 const costCollection = firestore.collection('cost');
 
@@ -15,6 +15,7 @@ export async function getPrice(
   const removedMinutes = minutes - cost.freeTime;
   if (removedMinutes <= 0) return price;
   price += cost.addedCost * removedMinutes;
+  if (price >= 50000) return 50000;
   return price;
 }
 

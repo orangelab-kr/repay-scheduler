@@ -1,5 +1,5 @@
 import dayjs, { Dayjs } from 'dayjs';
-import { firestore, getPrice, iamport, logger, send } from './tools';
+import { firestore, getPrice, iamport, logger, send, Webhook } from './tools';
 
 const rideCol = firestore.collection('ride');
 const userCol = firestore.collection('users');
@@ -13,7 +13,7 @@ async function main() {
   let cursor = 0;
   let count = 0;
   while (true) {
-    if (count > 100) {
+    if (count > 10) {
       logger.info(`1일 처리량을 초과하여 중단합니다.`);
       break;
     }
@@ -27,7 +27,7 @@ async function main() {
     cursor += 100;
     logger.info(`미수금 사용자 ${users.length}명을 찾았습니다.`);
     for (const user of users) {
-      if (count > 100) break;
+      if (count > 10) break;
 
       const birthday = user.birthday.format('YYYY년 MM월 DD년');
       const username = user.username || '알 수 없음';
@@ -222,6 +222,10 @@ async function retryPay(
           rideDetails,
         });
 
+        await Webhook.send(
+          `${user.username}님 빌링키 자동 결제를 완료하였습니다. ${price}원 / ${user.phone} / ${ride.branch}`
+        );
+
         return true;
       }
 
@@ -412,19 +416,19 @@ async function getUser(uid: string): Promise<any> {
 
 async function getUnpaiedRides(cursor: number, limit = 100): Promise<any[]> {
   const rides: any[] = [];
-  // const unpaiedRides = await rideCol
-  //   .where('payment', '==', null)
-  //   .where('end_time', '>', dayjs('2021-01-01').toDate())
-  //   .orderBy('end_time', 'asc')
-  //   .startAt(cursor)
-  //   .limit(limit)
-  //   .get();
-
   const unpaiedRides = await rideCol
-    .where('uid', '==', 'Lf6lP5Pv1rTPViWUJwKvmMGPwHj2')
     .where('payment', '==', null)
-    .limit(1)
+    .where('end_time', '>', dayjs('2021-01-01').toDate())
+    .orderBy('end_time', 'asc')
+    .startAt(cursor)
+    .limit(limit)
     .get();
+
+  // const unpaiedRides = await rideCol
+  //   .where('uid', '==', 'Lf6lP5Pv1rTPViWUJwKvmMGPwHj2')
+  //   .where('payment', '==', null)
+  //   .limit(1)
+  //   .get();
 
   logger.info(`미결제 라이드 기록, ${unpaiedRides.size}개 발견하였습니다.`);
   unpaiedRides.forEach((ride) => rides.push(ride.data()));
