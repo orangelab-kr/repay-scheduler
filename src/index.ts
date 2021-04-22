@@ -1,5 +1,5 @@
+import { Webhook, firestore, getPrice, iamport, logger, send } from './tools';
 import dayjs, { Dayjs } from 'dayjs';
-import { firestore, getPrice, iamport, logger, send, Webhook } from './tools';
 
 const rideCol = firestore.collection('ride');
 const userCol = firestore.collection('users');
@@ -361,19 +361,19 @@ async function getUser(uid: string): Promise<any> {
 
 async function getUnpaiedRides(cursor: Dayjs, limit = 100): Promise<any[]> {
   const rides: any[] = [];
-  // const unpaiedRides = await rideCol
-  //   .where('payment', '==', null)
-  //   .where('end_time', '>', dayjs('2021-01-01').toDate())
-  //   .orderBy('end_time', 'asc')
-  //   .startAt(cursor.toDate())
-  //   .limit(limit)
-  //   .get();
-
   const unpaiedRides = await rideCol
-    .where('uid', '==', 'Lf6lP5Pv1rTPViWUJwKvmMGPwHj2')
     .where('payment', '==', null)
-    .limit(1)
+    .where('end_time', '>', dayjs('2021-01-01').toDate())
+    .orderBy('end_time', 'asc')
+    .startAt(cursor.toDate())
+    .limit(limit)
     .get();
+
+  // const unpaiedRides = await rideCol
+  //   .where('uid', '==', 'Lf6lP5Pv1rTPViWUJwKvmMGPwHj2')
+  //   .where('payment', '==', null)
+  //   .limit(1)
+  //   .get();
 
   logger.info(
     `[${cursor.toDate()}] 미결제 라이드 기록, ${
