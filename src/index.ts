@@ -8,6 +8,36 @@ const maxLevel = Number(process.env.MAX_LEVEL || 4);
 const sleep = (timeout: number) =>
   new Promise((resolve) => setTimeout(resolve, timeout));
 
+interface User {
+  uid: string;
+  username: string;
+  phone: string;
+  birthday: Dayjs;
+  billingKeys: string[];
+}
+
+interface Ride {
+  rideId: string;
+  branch: string;
+  startedAt: Dayjs;
+  endedAt: Dayjs;
+  unpaied: boolean;
+  repayTime: Dayjs;
+  repayLevel: number;
+  ref: string;
+}
+
+interface RideDetails {
+  branch: string;
+  cost: number;
+  coupon: string;
+  endedAt: Dayjs;
+  kickboardName: string;
+  kickboardId: string;
+  payment?: string;
+  startedAt: Dayjs;
+}
+
 async function main() {
   logger.info('시스템을 시작합니다.');
   await Webhook.send(`🤚 시스템을 시작합니다.`);
@@ -138,25 +168,7 @@ async function main() {
   }
 }
 
-async function upgradeLevel(
-  user: {
-    uid: string;
-    username: string;
-    phone: string;
-    birthday: Dayjs;
-    billingKeys: string[];
-  },
-  ride: {
-    rideId: string;
-    branch: string;
-    startedAt: Dayjs;
-    endedAt: Dayjs;
-    unpaied: boolean;
-    repayTime: Dayjs;
-    repayLevel: number;
-    ref: string;
-  }
-): Promise<void> {
+async function upgradeLevel(user: User, ride: Ride): Promise<void> {
   const repayTime = new Date();
   const repayLevel = ++ride.repayLevel;
   const rideId = ride.ref.substr(5);
@@ -166,6 +178,7 @@ async function upgradeLevel(
     .collection('ride')
     .where('ref', '==', ride.ref)
     .get();
+
   let userRideId;
   userRides.forEach((ride) => (userRideId = ride.id));
   if (userRideId) {
@@ -178,33 +191,9 @@ async function upgradeLevel(
 }
 
 async function retryPay(
-  user: {
-    uid: string;
-    username: string;
-    phone: string;
-    birthday: Dayjs;
-    billingKeys: string[];
-  },
-  ride: {
-    rideId: string;
-    branch: string;
-    startedAt: Dayjs;
-    endedAt: Dayjs;
-    unpaied: boolean;
-    repayTime: Dayjs;
-    repayLevel: number;
-    ref: string;
-  },
-  rideDetails: {
-    branch: string;
-    cost: number;
-    coupon: string;
-    endedAt: Dayjs;
-    kickboardName: string;
-    kickboardId: string;
-    payment?: string;
-    startedAt: Dayjs;
-  },
+  user: User,
+  ride: Ride,
+  rideDetails: RideDetails,
   price: number
 ): Promise<boolean> {
   try {
@@ -255,22 +244,8 @@ async function retryPay(
 }
 
 async function setPaied(
-  user: {
-    uid: string;
-    username: string;
-    phone: string;
-    birthday: Dayjs;
-    billingKeys: string[];
-  },
-  ride: {
-    branch: string;
-    startedAt: Dayjs;
-    endedAt: Dayjs;
-    unpaied: boolean;
-    repayTime: Dayjs;
-    repayLevel: number;
-    ref: string;
-  },
+  user: User,
+  ride: Ride,
   merchantUid: string,
   price: number
 ): Promise<void> {
@@ -281,6 +256,7 @@ async function setPaied(
     repayLevel: null,
     repayTime: null,
   });
+
   const userRides = await userCol
     .doc(user.uid)
     .collection('ride')
@@ -297,31 +273,8 @@ async function setPaied(
   }
 }
 
-async function getUserRides(
-  uid: string
-): Promise<
-  {
-    rideId: string;
-    branch: string;
-    startedAt: Dayjs;
-    endedAt: Dayjs;
-    unpaied: boolean;
-    repayTime: Dayjs;
-    repayLevel: number;
-    ref: string;
-  }[]
-> {
-  const rides: {
-    rideId: string;
-    branch: string;
-    startedAt: Dayjs;
-    endedAt: Dayjs;
-    unpaied: boolean;
-    repayTime: Dayjs;
-    repayLevel: number;
-    ref: string;
-  }[] = [];
-
+async function getUserRides(uid: string): Promise<Ride[]> {
+  const rides: Ride[] = [];
   const rideDocs = await userCol
     .doc(uid)
     .collection('ride')
@@ -352,21 +305,9 @@ async function getUsers(
   limit = 100
 ): Promise<{
   newCursor: Dayjs;
-  users: {
-    uid: string;
-    username: string;
-    phone: string;
-    birthday: Dayjs;
-    billingKeys: string[];
-  }[];
+  users: User[];
 }> {
-  const users: {
-    uid: string;
-    username: string;
-    phone: string;
-    birthday: Dayjs;
-    billingKeys: string[];
-  }[] = [];
+  const users: User[] = [];
 
   let newCursor = dayjs(0);
   const unpaiedRides = await getUnpaiedRides(cursor, limit);
@@ -396,18 +337,7 @@ async function getUsers(
   return { newCursor, users };
 }
 
-async function getRide(
-  rideId: string
-): Promise<{
-  branch: string;
-  cost: number;
-  coupon: string;
-  endedAt: Dayjs;
-  kickboardName: string;
-  kickboardId: string;
-  payment?: string;
-  startedAt: Dayjs;
-} | null> {
+async function getRide(rideId: string): Promise<RideDetails | null> {
   const ride = await rideCol.doc(rideId).get();
   const data = ride.data();
   if (!data) return null;
@@ -431,19 +361,19 @@ async function getUser(uid: string): Promise<any> {
 
 async function getUnpaiedRides(cursor: Dayjs, limit = 100): Promise<any[]> {
   const rides: any[] = [];
-  const unpaiedRides = await rideCol
-    .where('payment', '==', null)
-    .where('end_time', '>', dayjs('2021-01-01').toDate())
-    .orderBy('end_time', 'asc')
-    .startAt(cursor.toDate())
-    .limit(limit)
-    .get();
-
   // const unpaiedRides = await rideCol
-  //   .where('uid', '==', 'Lf6lP5Pv1rTPViWUJwKvmMGPwHj2')
   //   .where('payment', '==', null)
-  //   .limit(1)
+  //   .where('end_time', '>', dayjs('2021-01-01').toDate())
+  //   .orderBy('end_time', 'asc')
+  //   .startAt(cursor.toDate())
+  //   .limit(limit)
   //   .get();
+
+  const unpaiedRides = await rideCol
+    .where('uid', '==', 'Lf6lP5Pv1rTPViWUJwKvmMGPwHj2')
+    .where('payment', '==', null)
+    .limit(1)
+    .get();
 
   logger.info(
     `[${cursor.toDate()}] 미결제 라이드 기록, ${
@@ -455,15 +385,7 @@ async function getUnpaiedRides(cursor: Dayjs, limit = 100): Promise<any[]> {
   return rides;
 }
 
-async function getUserByPhone(
-  phone: string
-): Promise<{
-  uid: string;
-  username: string;
-  phone: string;
-  birthday: Dayjs;
-  billingKeys: string[];
-} | null> {
+async function getUserByPhone(phone: string): Promise<User | null> {
   let user = null;
   const users = await userCol.where('phone', '==', phone).limit(1).get();
   users.forEach((userDoc) => {
