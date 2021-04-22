@@ -36,7 +36,7 @@ async function main() {
     for (const user of users) {
       if (count > maxCount) break;
 
-      const birthday = user.birthday.format('YYYY년 MM월 DD년');
+      const birthday = user.birthday.format('YYYY년 MM월 DD월');
       const username = user.username || '알 수 없음';
       const phone = user.phone || '전화번호 없음';
       user.username = user.username || '고객';
@@ -453,6 +453,66 @@ async function getUnpaiedRides(cursor: Dayjs, limit = 100): Promise<any[]> {
 
   unpaiedRides.forEach((ride) => rides.push(ride.data()));
   return rides;
+}
+
+async function getUserByPhone(
+  phone: string
+): Promise<{
+  uid: string;
+  username: string;
+  phone: string;
+  birthday: Dayjs;
+  billingKeys: string[];
+} | null> {
+  let user = null;
+  const users = await userCol.where('phone', '==', phone).limit(1).get();
+  users.forEach((userDoc) => {
+    const userData = userDoc.data();
+    user = {
+      uid: userDoc.id,
+      username: userData.name,
+      phone: userData.phone,
+      birthday: dayjs(userData.birth._seconds * 1000),
+      billingKeys: userData.billkey,
+    };
+  });
+
+  return user;
+}
+
+async function setPaiedWithPhone(phone: string): Promise<void> {
+  const user = await getUserByPhone(phone);
+  if (!user) {
+    logger.error(`사용자를 찾을 수 없습니다.`);
+    return;
+  }
+
+  logger.info(
+    '==========================================================================='
+  );
+
+  logger.info(
+    `${user.username}님 ${user.phone} ${user.birthday.format(
+      'YYYY년 MM월 DD일'
+    )}`
+  );
+
+  const rides = await getUserRides(user.uid);
+  if (rides.length <= 0) {
+    logger.info('- 미수금이 없습니다.');
+    return;
+  }
+
+  for (const ride of rides) {
+    const diff = ride.endedAt.diff(ride.startedAt, 'minutes');
+    const price = await getPrice(ride.branch, diff);
+    const startedAt = ride.startedAt.format('YYYY년 MM월 DD일 HH시 mm분');
+    const endedAt = ride.endedAt.format('HH시 mm분');
+    const usedAt = `${startedAt} ~ ${endedAt}(${diff}분, ${price.toLocaleString()}원)`;
+
+    logger.info(`- ${usedAt}`);
+    await setPaied(user, ride, `${Date.now()}`, price);
+  }
 }
 
 main();
