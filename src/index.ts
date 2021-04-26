@@ -5,6 +5,7 @@ const rideCol = firestore.collection('ride');
 const userCol = firestore.collection('users');
 
 const maxLevel = Number(process.env.MAX_LEVEL || 4);
+const maxCount = Number(process.env.MAX_COUNT || 100);
 const sleep = (timeout: number) =>
   new Promise((resolve) => setTimeout(resolve, timeout));
 
@@ -42,11 +43,10 @@ async function main() {
   logger.info('시스템을 시작합니다.');
   await Webhook.send(`🤚 시스템을 시작합니다.`);
 
-  const maxCount = 50;
   let cursor = dayjs(0);
   let count = 0;
   while (true) {
-    if (count > maxCount) {
+    if (count >= maxCount) {
       await Webhook.send(`🚥 ${count}명에게 메세지를 전송하였습니다.`);
       logger.info(`[${cursor.toDate()}] 1일 처리량을 초과하여 중단합니다.`);
       break;
@@ -64,7 +64,7 @@ async function main() {
 
     cursor = newCursor;
     for (const user of users) {
-      if (count > maxCount) break;
+      if (count >= maxCount) break;
 
       const birthday = user.birthday.format('YYYY년 MM월 DD월');
       const username = user.username || '알 수 없음';
