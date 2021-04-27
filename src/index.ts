@@ -402,7 +402,7 @@ async function getUserByPhone(phone: string): Promise<User | null> {
   return user;
 }
 
-async function setPaiedWithPhone(phone: string): Promise<void> {
+async function setPaiedByPhone(phone: string): Promise<void> {
   const user = await getUserByPhone(phone);
   if (!user) {
     logger.error(`사용자를 찾을 수 없습니다.`);
@@ -433,7 +433,15 @@ async function setPaiedWithPhone(phone: string): Promise<void> {
     const usedAt = `${startedAt} ~ ${endedAt}(${diff}분, ${price.toLocaleString()}원)`;
 
     logger.info(`- ${usedAt}`);
-    await setPaied(user, ride, `${Date.now()}`, price);
+    try {
+      await setPaied(user, ride, `${Date.now()}`, price);
+      await Webhook.send(
+        `✅ ${user.username}님 미결제를 강제로 삭제하였습니다. ${usedAt} / ${user.phone} / ${ride.branch}`
+      );
+    } catch (err) {
+      logger.error(err.message);
+      logger.info(err.stack);
+    }
   }
 }
 
