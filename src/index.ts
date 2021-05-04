@@ -98,7 +98,7 @@ async function main() {
           const price = await getPrice(ride.branch, diff);
           const startedAt = ride.startedAt.format('YYYY년 MM월 DD일 HH시 mm분');
           const endedAt = ride.endedAt.format('HH시 mm분');
-          const usedAt = `${startedAt} ~ ${endedAt}(${diff}분, ${price.toLocaleString()}원)`;
+          const usedAt = `${startedAt} ~ ${endedAt}(${diff}분)`;
           if (diff <= 2) {
             logger.info(`${diff}분 기록입니다. 무시합니다.`);
             continue;
@@ -134,30 +134,29 @@ async function main() {
             }
           }
 
-          logger.info(`결제 링크: https://repay.hikick.kr/${ride.rideId}`);
-          if (level < maxLevel - 1) {
-            count++;
-            await send(user.phone, 'general', {
-              user,
-              ride,
-              rideDetails,
-              usedAt,
-              price: `${price.toLocaleString()}원`,
-            });
-
-            logger.info('문자를 전송하였습니다. (일반)');
-            continue;
-          }
-
-          count++;
-          await send(user.phone, 'warning', {
+          const paymentURL = `https://repay.hikick.kr/${ride.rideId}`;
+          logger.info(`결제 링크: ${paymentURL}`);
+          const title =
+            '마지막으로 이용하신 라이드가 정상적으로 결제되지 않았습니다.';
+          const buttons = { 안내: paymentURL };
+          const fields = {
             user,
             ride,
             rideDetails,
             usedAt,
             price: `${price.toLocaleString()}원`,
-          });
+            paymentURL,
+          };
 
+          if (level < maxLevel - 1) {
+            count++;
+            await send(user.phone, 'TE_3356', title, fields, buttons);
+            logger.info('문자를 전송하였습니다. (일반)');
+            continue;
+          }
+
+          count++;
+          await send(user.phone, 'TE_3357', title, fields, buttons);
           logger.info('문자를 전송하였습니다. (경고)');
         } catch (err) {
           logger.error('라이드 오류가 발생하였습니다. ' + err.message);
@@ -214,14 +213,19 @@ async function retryPay(
         const diff = ride.endedAt.diff(ride.startedAt, 'minutes');
         const startedAt = ride.startedAt.format('YYYY년 MM월 DD일 HH시 mm분');
         const endedAt = ride.endedAt.format('HH시 mm분');
-        const usedAt = `${startedAt} ~ ${endedAt}(${diff}분, ${price.toLocaleString()}원)`;
-        await send(user.phone, 'completed', {
-          user,
-          usedAt,
-          cardName: `${res.card_number} (${res.card_name})`,
-          price: `${price.toLocaleString()}원`,
-          rideDetails,
-        });
+        const usedAt = `${startedAt} ~ ${endedAt}(${diff}분)`;
+        await send(
+          user.phone,
+          'TE_3355',
+          `이용하신 킥보드(${rideDetails.kickboardName})가 자동으로 결제되었습니다.`,
+          {
+            user,
+            usedAt,
+            cardName: `${res.card_number} (${res.card_name})`,
+            price: `${price.toLocaleString()}원`,
+            rideDetails,
+          }
+        );
 
         await Webhook.send(
           `✅ ${user.username}님 빌링키 자동 결제를 완료하였습니다. ${price}원 / ${user.phone} / ${ride.branch}`
@@ -361,19 +365,20 @@ async function getUser(uid: string): Promise<any> {
 
 async function getUnpaiedRides(cursor: Dayjs, limit = 100): Promise<any[]> {
   const rides: any[] = [];
-  const unpaiedRides = await rideCol
-    .where('payment', '==', null)
-    .where('end_time', '>', dayjs('2021-01-01').toDate())
-    .orderBy('end_time', 'asc')
-    .startAt(cursor.toDate())
-    .limit(limit)
-    .get();
-
-  // const unpaiedRides = await rideCol
-  //   .where('uid', '==', 'Lf6lP5Pv1rTPViWUJwKvmMGPwHj2')
-  //   .where('payment', '==', null)
-  //   .limit(1)
-  //   .get();
+  const unpaiedRides =
+    process.env.NODE_ENV === 'prod'
+      ? await rideCol
+          .where('payment', '==', null)
+          .where('end_time', '>', dayjs('2021-01-01').toDate())
+          .orderBy('end_time', 'asc')
+          .startAt(cursor.toDate())
+          .limit(limit)
+          .get()
+      : await rideCol
+          .where('uid', '==', 'Lf6lP5Pv1rTPViWUJwKvmMGPwHj2')
+          .where('payment', '==', null)
+          .limit(1)
+          .get();
 
   logger.info(
     `[${cursor.toDate()}] 미결제 라이드 기록, ${
