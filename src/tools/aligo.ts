@@ -70,7 +70,7 @@ export async function send(
   const token = await getToken(ALIGO_PROXY, ALIGO_IDENTIFIER, ALIGO_SECRET);
   const renderer = await engine.renderFile(template, props);
   const rendererSMS = await engine.renderFile(`${template}_SMS`, props);
-  const res = await rp({
+  await rp({
     method: 'POST',
     url: 'http://kakaoapi.aligo.in/akv10/alimtalk/send/',
     proxy: ALIGO_PROXY,

@@ -1,6 +1,6 @@
 import { InternalError } from './error';
-import { firestore } from './firestore';
 import { OPCODE } from './opcode';
+import { firestore } from './firebase';
 
 const costCollection = firestore.collection('cost');
 

@@ -1,4 +1,12 @@
-import { Webhook, firestore, getPrice, iamport, logger, send } from './tools';
+import {
+  Webhook,
+  auth,
+  firestore,
+  getPrice,
+  iamport,
+  logger,
+  send,
+} from './tools';
 import dayjs, { Dayjs } from 'dayjs';
 
 const rideCol = firestore.collection('ride');
@@ -12,7 +20,7 @@ const sleep = (timeout: number) =>
 interface User {
   uid: string;
   username: string;
-  phone: string;
+  phone: string | null;
   birthday: Dayjs;
   billingKeys: string[];
 }
@@ -66,102 +74,111 @@ async function main() {
     for (const user of users) {
       if (count >= maxCount) break;
 
-      const birthday = user.birthday.format('YYYY년 MM월 DD월');
-      const username = user.username || '알 수 없음';
-      const phone = user.phone || '전화번호 없음';
-      user.username = user.username || '고객';
-      logger.info(
-        '==========================================================================='
-      );
+      try {
+        logger.info(
+          '==========================================================================='
+        );
 
-      const rides = await getUserRides(user.uid);
-      logger.info(
-        `${count} >> ${user.uid} - ${username}님 ${phone} ${birthday}`
-      );
+        const birthday = user.birthday.format('YYYY년 MM월 DD월');
+        user.username = user.username || '고객';
 
-      for (const ride of rides) {
-        try {
-          const currentDate = dayjs().startOf('day');
-          if (currentDate.diff(ride.repayTime.startOf('day'), 'days') < 7) {
-            logger.info(`처리한지 일주일이 되지 않아 넘어갑니다.`);
-            continue;
-          }
-
-          await upgradeLevel(user, ride);
-          if (phone === '전화번호 없음') {
+        if (!user.phone) {
+          user.phone = await getPhoneByAuth(user);
+          if (!user.phone) {
             logger.info(`이름 또는 전화번호가 올바르지 않습니다. 무시합니다.`);
             break;
           }
+        }
 
-          const level = ride.repayLevel;
-          const diff = ride.endedAt.diff(ride.startedAt, 'minutes');
-          const price = await getPrice(ride.branch, diff);
-          const startedAt = ride.startedAt.format('YYYY년 MM월 DD일 HH시 mm분');
-          const endedAt = ride.endedAt.format('HH시 mm분');
-          const usedAt = `${startedAt} ~ ${endedAt}(${diff}분)`;
-          if (diff <= 2) {
-            logger.info(`${diff}분 기록입니다. 무시합니다.`);
-            continue;
-          }
+        const rides = await getUserRides(user.uid);
+        logger.info(
+          `${count} >> ${user.uid} - ${user.username}님 ${user.phone} ${birthday}`
+        );
 
-          const rideDetails = await getRide(ride.rideId);
-          if (!rideDetails) {
-            logger.info(`잘못된 데이터입니다. 무시합니다.`);
-            continue;
-          }
-
-          if (rideDetails.payment) {
-            logger.info(`이미 결제된 라이드입니다.`);
-            continue;
-          }
-
-          logger.info(`${ride.branch} - ${usedAt}`);
-          if (ride.repayLevel >= maxLevel) {
-            logger.info(`이미 관리자에서 처리 중인 라이드 기록입니다.`);
-            continue;
-          }
-
-          if (user.billingKeys) {
-            logger.info(`사용자 정보에 빌링키가 존재하여 결제를 시도합니다.`);
-            const result = await retryPay(user, ride, rideDetails, price);
-            count++;
-            if (result) {
-              logger.info(
-                `빌링키로 결제를 성공하여 결제 링크를 발송하지 않습니다.`
-              );
-
+        for (const ride of rides) {
+          try {
+            const currentDate = dayjs().startOf('day');
+            if (currentDate.diff(ride.repayTime.startOf('day'), 'days') < 7) {
+              logger.info(`처리한지 일주일이 되지 않아 넘어갑니다.`);
               continue;
             }
-          }
 
-          const paymentURL = `https://repay.hikick.kr/${ride.rideId}`;
-          logger.info(`결제 링크: ${paymentURL}`);
-          const title =
-            '마지막으로 이용하신 라이드가 정상적으로 결제되지 않았습니다.';
-          const buttons = { 안내: paymentURL };
-          const fields = {
-            user,
-            ride,
-            rideDetails,
-            usedAt,
-            price: `${price.toLocaleString()}원`,
-            paymentURL,
-          };
+            await upgradeLevel(user, ride);
+            const level = ride.repayLevel;
+            const diff = ride.endedAt.diff(ride.startedAt, 'minutes');
+            const price = await getPrice(ride.branch, diff);
+            const startedAt = ride.startedAt.format(
+              'YYYY년 MM월 DD일 HH시 mm분'
+            );
+            const endedAt = ride.endedAt.format('HH시 mm분');
+            const usedAt = `${startedAt} ~ ${endedAt}(${diff}분)`;
+            if (diff <= 2) {
+              logger.info(`${diff}분 기록입니다. 무시합니다.`);
+              continue;
+            }
 
-          if (level < maxLevel - 1) {
+            const rideDetails = await getRide(ride.rideId);
+            if (!rideDetails) {
+              logger.info(`잘못된 데이터입니다. 무시합니다.`);
+              continue;
+            }
+
+            if (rideDetails.payment) {
+              logger.info(`이미 결제된 라이드입니다.`);
+              continue;
+            }
+
+            logger.info(`${ride.branch} - ${usedAt}`);
+            if (ride.repayLevel >= maxLevel) {
+              logger.info(`이미 관리자에서 처리 중인 라이드 기록입니다.`);
+              continue;
+            }
+
+            if (user.billingKeys) {
+              logger.info(`사용자 정보에 빌링키가 존재하여 결제를 시도합니다.`);
+              const result = await retryPay(user, ride, rideDetails, price);
+              count++;
+              if (result) {
+                logger.info(
+                  `빌링키로 결제를 성공하여 결제 링크를 발송하지 않습니다.`
+                );
+
+                continue;
+              }
+            }
+
+            const paymentURL = `https://repay.hikick.kr/${ride.rideId}`;
+            logger.info(`결제 링크: ${paymentURL}`);
+            const title =
+              '마지막으로 이용하신 라이드가 정상적으로 결제되지 않았습니다.';
+            const buttons = { 안내: paymentURL };
+            const fields = {
+              user,
+              ride,
+              rideDetails,
+              usedAt,
+              price: `${price.toLocaleString()}원`,
+              paymentURL,
+            };
+
+            if (level < maxLevel - 1) {
+              count++;
+              await send(user.phone, 'TE_3356', title, fields, buttons);
+              logger.info('문자를 전송하였습니다. (일반)');
+              continue;
+            }
+
             count++;
-            await send(user.phone, 'TE_3356', title, fields, buttons);
-            logger.info('문자를 전송하였습니다. (일반)');
-            continue;
+            await send(user.phone, 'TE_3357', title, fields, buttons);
+            logger.info('문자를 전송하였습니다. (경고)');
+          } catch (err) {
+            logger.error('라이드 오류가 발생하였습니다. ' + err.message);
+            logger.error(err.stack);
           }
-
-          count++;
-          await send(user.phone, 'TE_3357', title, fields, buttons);
-          logger.info('문자를 전송하였습니다. (경고)');
-        } catch (err) {
-          logger.error('라이드 오류가 발생하였습니다. ' + err.message);
-          logger.error(err.stack);
         }
+      } catch (err) {
+        logger.error('사용자 오류가 발생하였습니다. ' + err.message);
+        logger.error(err.stack);
       }
     }
   }
@@ -196,6 +213,7 @@ async function retryPay(
   price: number
 ): Promise<boolean> {
   try {
+    if (!user.phone) return false;
     const merchantUid = `${Date.now()}`;
     for (const billingKey of user.billingKeys) {
       const res = await iamport.subscribe.again({
@@ -447,6 +465,23 @@ async function setPaiedByPhone(phone: string): Promise<void> {
       logger.error(err.message);
       logger.info(err.stack);
     }
+  }
+}
+
+async function getPhoneByAuth(user: User): Promise<string | null> {
+  try {
+    const authUser = await auth.getUser(user.uid);
+    if (!authUser.phoneNumber) return null;
+    await userCol.doc(user.uid).update({ phone: authUser.phoneNumber });
+    logger.info(
+      `${user.username}님의 전화번호를 인증 서버로부터 가져왔습니다.`
+    );
+
+    return authUser.phoneNumber;
+  } catch (err) {
+    logger.error(err.message);
+    logger.info(err.stack);
+    return null;
   }
 }
 
