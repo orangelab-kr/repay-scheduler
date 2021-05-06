@@ -58,7 +58,7 @@ export async function send(
     throw Error('문자를 발송할 수 없습니다.');
   }
 
-  if (!(buttons instanceof Array)) {
+  if (buttons && !(buttons instanceof Array)) {
     buttons = Object.entries(buttons).map(([name, url]) => ({
       type: 'WL',
       name,
