@@ -1,4 +1,5 @@
 import { Liquid } from 'liquidjs';
+import { logger } from './logger';
 import rp from 'request-promise';
 
 const engine = new Liquid({
@@ -70,7 +71,7 @@ export async function send(
   const token = await getToken(ALIGO_PROXY, ALIGO_IDENTIFIER, ALIGO_SECRET);
   const renderer = await engine.renderFile(template, props);
   const rendererSMS = await engine.renderFile(`${template}_SMS`, props);
-  await rp({
+  const options = {
     method: 'POST',
     url: 'http://kakaoapi.aligo.in/akv10/alimtalk/send/',
     proxy: ALIGO_PROXY,
@@ -91,5 +92,9 @@ export async function send(
       testmode_yn: process.env.NODE_ENV !== 'prod' ? 'true' : 'false',
       button_1: JSON.stringify({ button: buttons }),
     },
-  });
+  };
+
+  logger.info(JSON.stringify(options));
+  const res = await rp(options);
+  console.log(JSON.stringify(res));
 }
