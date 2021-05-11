@@ -96,5 +96,5 @@ export async function send(
 
   logger.info(JSON.stringify(options));
   const res = await rp(options);
-  console.log(JSON.stringify(res));
+  logger.info(JSON.stringify(res));
 }
