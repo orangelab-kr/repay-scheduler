@@ -62,8 +62,9 @@ async function main() {
     }
 
     const { newCursor, users } = await getUsers(cursor);
-    if (users.length <= 0) {
+    if (users.length <= 0 || cursor.isSame(newCursor)) {
       logger.info(`[${cursor.toDate()}] 미수금 사용자를 모두 처리했습니다.`);
+      await Webhook.send(`🚥  미수금 사용자를 모두 처리했습니다. (${count}명)`);
       process.exit(0);
     }
 
@@ -335,7 +336,7 @@ async function getUsers(
   let newCursor = dayjs(0);
   const unpaiedRides = await getUnpaiedRides(cursor, limit);
   for (const ride of unpaiedRides) {
-    newCursor = ride.end_time;
+    newCursor = dayjs(ride.end_time._seconds * 1000);
     const exists = users.find((uid) => ride.uid === uid);
     if (exists) {
       logger.warn(`${ride.uid} 중복 발견하였습니다.`);
@@ -385,19 +386,19 @@ async function getUser(uid: string): Promise<any> {
 async function getUnpaiedRides(cursor: Dayjs, limit = 100): Promise<any[]> {
   const rides: any[] = [];
   const unpaiedRides =
-    // process.env.NODE_ENV === 'prod'
-    await rideCol
-      .where('payment', '==', null)
-      .where('end_time', '>', dayjs('2021-01-01').toDate())
-      .orderBy('end_time', sorting)
-      .startAt(cursor.toDate())
-      .limit(limit)
-      .get();
-  // : await rideCol
-  //     .where('uid', '==', 'Lf6lP5Pv1rTPViWUJwKvmMGPwHj2')
-  //     .where('payment', '==', null)
-  //     .limit(1)
-  //   .get();
+    process.env.NODE_ENV === 'prod'
+      ? await rideCol
+          .where('payment', '==', null)
+          .where('end_time', '>', dayjs('2021-01-01').toDate())
+          .orderBy('end_time', sorting)
+          .startAt(cursor.toDate())
+          .limit(limit)
+          .get()
+      : await rideCol
+          .where('uid', '==', 'q3h0TuEmJZYuBWNWx722XKiOXSg1')
+          .where('payment', '==', null)
+          .limit(1)
+          .get();
 
   logger.info(
     `[${cursor.toDate()}] 미결제 라이드 기록, ${
