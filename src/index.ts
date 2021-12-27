@@ -17,6 +17,7 @@ const maxCount = Number(process.env.MAX_COUNT || 100);
 const sleep = (timeout: number) =>
   new Promise((resolve) => setTimeout(resolve, timeout));
 const sorting = dayjs().format('A') == 'AM' ? 'asc' : 'desc';
+const mode = process.env.NODE_ENV !== 'prod' ? `(${process.env.NODE_ENV})` : '';
 
 interface User {
   uid: string;
@@ -50,21 +51,25 @@ interface RideDetails {
 
 async function main() {
   logger.info('시스템을 시작합니다.');
-  await Webhook.send(`🤚 시스템을 시작합니다.`);
+  await Webhook.send(`🤚 시스템을 시작합니다. ${mode}`);
 
   let cursor = dayjs(sorting === 'asc' ? 0 : undefined);
   let count = 0;
   while (true) {
     if (count >= maxCount) {
-      await Webhook.send(`🚥 ${count}명에게 메세지를 전송하였습니다.`);
-      logger.info(`[${cursor.toDate()}] 1일 처리량을 초과하여 중단합니다.`);
+      await Webhook.send(`🚥 ${count}명에게 메세지를 전송하였습니다. ${mode}`);
+      logger.info(`${cursor.toDate()} / 1일 처리량을 초과하여 중단합니다.`);
+
       break;
     }
 
     const { newCursor, users } = await getUsers(cursor);
     if (users.length <= 0 || cursor.isSame(newCursor)) {
-      logger.info(`[${cursor.toDate()}] 미수금 사용자를 모두 처리했습니다.`);
-      await Webhook.send(`🚥  미수금 사용자를 모두 처리했습니다. (${count}명)`);
+      logger.info(`${cursor.toDate()} / 미수금 사용자를 모두 처리했습니다.`);
+      await Webhook.send(
+        `🚥  미수금 사용자를 모두 처리했습니다. (${count}명) ${mode}`
+      );
+
       process.exit(0);
     }
 
@@ -100,25 +105,26 @@ async function main() {
         for (const ride of rides) {
           try {
             const currentDate = dayjs().startOf('day');
-            if (currentDate.diff(ride.repayTime.startOf('day'), 'days') < 7) {
-              logger.info(`처리한지 일주일이 되지 않아 넘어갑니다.`);
+            if (currentDate.diff(ride.repayTime, 'hours') <= 3) {
+              logger.info(`처리한지 3시간이 되지 않아 넘어갑니다.`);
               continue;
             }
 
-            await upgradeLevel(user, ride);
             const level = ride.repayLevel;
             const diff = ride.endedAt.diff(ride.startedAt, 'minutes');
-            const price = await getPrice(ride.branch, diff);
-            const startedAt = ride.startedAt.format(
-              'YYYY년 MM월 DD일 HH시 mm분'
-            );
-            const endedAt = ride.endedAt.format('HH시 mm분');
-            const usedAt = `${startedAt} ~ ${endedAt}(${diff}분)`;
             if (diff <= 2) {
               logger.info(`${diff}분 기록입니다. 무시합니다.`);
               continue;
             }
 
+            await upgradeLevel(user, ride);
+            const price = await getPrice(ride.branch, diff);
+            const startedAt = ride.startedAt.format(
+              'YYYY년 MM월 DD일 HH시 mm분'
+            );
+
+            const endedAt = ride.endedAt.format('HH시 mm분');
+            const usedAt = `${startedAt} ~ ${endedAt}(${diff}분)`;
             const rideDetails = await getRide(ride.rideId);
             if (!rideDetails) {
               logger.info(`잘못된 데이터입니다. 무시합니다.`);
@@ -139,8 +145,8 @@ async function main() {
             if (user.billingKeys) {
               logger.info(`사용자 정보에 빌링키가 존재하여 결제를 시도합니다.`);
               const result = await retryPay(user, ride, rideDetails, price);
-              count++;
               if (result) {
+                count++;
                 logger.info(
                   `빌링키로 결제를 성공하여 결제 링크를 발송하지 않습니다.`
                 );
@@ -149,36 +155,31 @@ async function main() {
               }
             }
 
-            const paymentURL = `https://repay.hikick.kr/${ride.rideId}`;
-            logger.info(`결제 링크: ${paymentURL}`);
-            const title =
-              '마지막으로 이용하신 라이드가 정상적으로 결제되지 않았습니다.';
-            const buttons = { 안내: paymentURL };
-            const fields = {
-              user,
-              ride,
-              rideDetails,
-              usedAt,
-              price: `${price.toLocaleString()}원`,
-              paymentURL,
-            };
+            if (!level) {
+              const paymentURL = `https://repay.hikick.kr/${ride.rideId}`;
+              logger.info(`결제 링크: ${paymentURL}`);
+              const title =
+                '마지막으로 이용하신 라이드가 정상적으로 결제되지 않았습니다.';
+              const buttons = { 안내: paymentURL };
+              const fields = {
+                user,
+                ride,
+                rideDetails,
+                usedAt,
+                price: `${price.toLocaleString()}원`,
+                paymentURL,
+              };
 
-            if (level < maxLevel - 1) {
               count++;
-              await send(user.phone, 'TE_3356', title, fields, buttons);
-              logger.info('문자를 전송하였습니다. (일반)');
-              continue;
+              await send(user.phone, 'TE_3357', title, fields, buttons);
+              logger.info('문자를 전송하였습니다. (경고)');
             }
-
-            count++;
-            await send(user.phone, 'TE_3357', title, fields, buttons);
-            logger.info('문자를 전송하였습니다. (경고)');
-          } catch (err) {
+          } catch (err: any) {
             logger.error('라이드 오류가 발생하였습니다. ' + err.message);
             logger.error(err.stack);
           }
         }
-      } catch (err) {
+      } catch (err: any) {
         logger.error('사용자 오류가 발생하였습니다. ' + err.message);
         logger.error(err.stack);
       }
@@ -248,7 +249,7 @@ async function retryPay(
         );
 
         await Webhook.send(
-          `✅ ${user.username}님 빌링키 자동 결제를 완료하였습니다. ${price}원 / ${user.phone} / ${ride.branch}`
+          `✅ ${user.username}님 빌링키 자동 결제를 완료하였습니다. ${price}원 / ${user.phone} / ${ride.branch} ${mode}`
         );
 
         return true;
@@ -259,7 +260,7 @@ async function retryPay(
     }
 
     return false;
-  } catch (err) {
+  } catch (err: any) {
     logger.error('결제 오류가 발생하였습니다. ' + err.name);
     logger.error(err.stack);
 
@@ -395,7 +396,7 @@ async function getUnpaiedRides(cursor: Dayjs, limit = 100): Promise<any[]> {
           .limit(limit)
           .get()
       : await rideCol
-          .where('uid', '==', 'q3h0TuEmJZYuBWNWx722XKiOXSg1')
+          .where('uid', '==', 'OL4wwIuDuQMtHUKQrRadupiaedJ3')
           .where('payment', '==', null)
           .limit(1)
           .get();
@@ -461,9 +462,9 @@ async function setPaiedByPhone(phone: string): Promise<void> {
     try {
       await setPaied(user, ride, `${Date.now()}`, price);
       await Webhook.send(
-        `✅ ${user.username}님 미결제를 강제로 삭제하였습니다. ${usedAt} / ${user.phone} / ${ride.branch}`
+        `✅ ${user.username}님 미결제를 강제로 삭제하였습니다. ${usedAt} / ${user.phone} / ${ride.branch} ${mode}`
       );
-    } catch (err) {
+    } catch (err: any) {
       logger.error(err.message);
       logger.info(err.stack);
     }
@@ -480,7 +481,7 @@ async function getPhoneByAuth(user: User): Promise<string | null> {
     );
 
     return authUser.phoneNumber;
-  } catch (err) {
+  } catch (err: any) {
     logger.error(err.message);
     logger.info(err.stack);
     return null;

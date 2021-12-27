@@ -1,5 +1,4 @@
 import { Liquid } from 'liquidjs';
-import { logger } from './logger';
 import rp from 'request-promise';
 
 const engine = new Liquid({
@@ -30,7 +29,7 @@ export async function getToken(
     setTimeout(() => (token = null), expiry * 3600 * 900);
     token = res.token;
     return token;
-  } catch (err) {
+  } catch (err: any) {
     throw Error(`서버에서 잘못된 값을 반환하였습니다.`);
   }
 }
@@ -94,7 +93,5 @@ export async function send(
     },
   };
 
-  logger.info(JSON.stringify(options));
   const res = await rp(options);
-  logger.info(JSON.stringify(res));
 }
