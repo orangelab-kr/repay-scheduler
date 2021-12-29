@@ -3,8 +3,8 @@ import { OPCODE } from './opcode';
 import { firestore } from './firebase';
 
 const costCollection = firestore.collection('cost');
-
 const costs: { [key: string]: any } = {};
+const maxPrice = Number(process.env.MAX_PRICE) || 33000;
 
 export async function getPrice(
   branch: string,
@@ -15,7 +15,7 @@ export async function getPrice(
   const removedMinutes = minutes - cost.freeTime;
   if (removedMinutes <= 0) return price;
   price += cost.addedCost * removedMinutes;
-  if (price >= 50000) return 50000;
+  if (price >= maxPrice) return maxPrice;
   return price;
 }
 
